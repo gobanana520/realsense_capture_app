@@ -213,5 +213,7 @@ class RealSenseCaptureToolkit:
 
 
 if __name__ == "__main__":
-    toolkit = RealSenseCaptureToolkit("config/rs_config.json")
+    PROJ_ROOT = Path(__file__).resolve().parent
+    config_file = PROJ_ROOT / "config" / "rs_config.json"
+    toolkit = RealSenseCaptureToolkit(config_file)
     toolkit.run()
