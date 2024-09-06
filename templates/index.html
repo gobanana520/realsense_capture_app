@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RealSense Camera Capture</title>
+    <style>
+      body {
+        text-align: center;
+      }
+      .row {
+        display: flex;
+        justify-content: center;
+        margin-top: 10px;
+      }
+      .row img {
+        margin: 5px;
+        max-width: 100%;
+      }
+      .row select,
+      .row input,
+      .row button {
+        margin: 5px;
+      }
+      #capture-btn {
+        margin-top: 20px;
+      }
+      #capture-message {
+        margin-top: 10px;
+        color: green;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>RealSense Camera Capture</h1>
+    <div class="row">
+      <select id="device-select"></select>
+      <button id="start-stream-btn">Start Streaming</button>
+      <button id="stop-stream-btn">Stop Streaming</button>
+    </div>
+    <div class="row">
+      <p id="device-info"></p>
+    </div>
+    <div class="row">
+      <input type="text" id="folder-name" placeholder="Enter sub-folder name" />
+      <button id="capture-btn">Capture</button>
+    </div>
+    <div class="row">
+      <img
+        id="stream-frame"
+        src="{{ url_for('video_feed') }}"
+        alt="Stream Frame"
+      />
+    </div>
+    <div class="row">
+      <p id="capture-message"></p>
+    </div>
+
+    <script>
+      async function loadDevices() {
+        const response = await fetch("/devices");
+        const devices = await response.json();
+        const deviceSelect = document.getElementById("device-select");
+        const deviceInfo = document.getElementById("device-info");
+
+        devices.forEach((device) => {
+          const option = document.createElement("option");
+          option.value = device.serial;
+          option.text = `${device.name} (${device.serial})`;
+          deviceSelect.add(option);
+        });
+
+        if (devices.length > 0) {
+          deviceInfo.textContent = `Connected device: ${devices[0].name} (${devices[0].serial})`;
+        } else {
+          deviceInfo.textContent = "No devices connected.";
+        }
+      }
+
+      document
+        .getElementById("start-stream-btn")
+        .addEventListener("click", () => {
+          const serial = document.getElementById("device-select").value;
+          fetch("/start_stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ serial }),
+          }).then(() => {
+            const selectedDevice =
+              document.getElementById("device-select").selectedOptions[0].text;
+            document.getElementById(
+              "device-info"
+            ).textContent = `Streaming from device: ${selectedDevice}`;
+          });
+        });
+
+      document
+        .getElementById("stop-stream-btn")
+        .addEventListener("click", () => {
+          fetch("/stop_stream", { method: "POST" }).then(() => {
+            document.getElementById("device-info").textContent =
+              "Streaming stopped.";
+          });
+        });
+
+      document
+        .getElementById("capture-btn")
+        .addEventListener("click", async () => {
+          const folderName = document.getElementById("folder-name").value;
+          const response = await fetch("/capture", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ folder_name: folderName }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const timestamp = data.timestamp;
+            document.getElementById(
+              "capture-message"
+            ).textContent = `Capture_${timestamp} saved!!!`;
+          } else {
+            document.getElementById("capture-message").textContent =
+              "Capture failed.";
+            document.getElementById("capture-message").style.color = "red";
+          }
+        });
+
+      // Load devices on page load
+      loadDevices();
+    </script>
+  </body>
+</html>
