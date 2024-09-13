@@ -1,12 +1,12 @@
+import time
 from flask import Flask, render_template, Response, request, jsonify
 import cv2
 import numpy as np
 import pyrealsense2 as rs
 import datetime
-import time
 import threading
 import sys
-from .Utils import get_logger, read_config, PROJ_ROOT
+from .Utils import get_logger, read_config, PROJ_ROOT, write_data_to_json
 
 
 class RealSenseCaptureToolkit:
@@ -30,7 +30,7 @@ class RealSenseCaptureToolkit:
 
         # Create a black image for fallback use when frames are not available
         self.black_image = np.zeros(
-            (self.rs_config.image_height, self.rs_config.image_width * 2, 3),
+            (self.rs_config.image_height, self.rs_config.image_width, 3),
             dtype=np.uint8,
         )
 
@@ -48,6 +48,12 @@ class RealSenseCaptureToolkit:
         )
         self.app.add_url_rule("/capture", "capture", self.capture, methods=["POST"])
         self.app.add_url_rule("/video_feed", "video_feed", self.video_feed)
+        self.app.add_url_rule(
+            "/get_calibration_info",
+            "get_calibration_info",
+            self.get_calibration_info,
+            methods=["POST"],
+        )
         self.app.add_url_rule("/", "index", self.index)
 
     def get_connected_devices(self):
@@ -130,7 +136,7 @@ class RealSenseCaptureToolkit:
         return "", 204
 
     def capture(self):
-        """Capture and save color and depth images."""
+        """Capture and save both color and depth images."""
         if not self.streaming or self.pipeline is None:
             self.logger.warning("Attempted capture while streaming is inactive.")
             return "Streaming is not active", 400
@@ -153,11 +159,16 @@ class RealSenseCaptureToolkit:
             depth_image = np.asanyarray(aligned_depth_frame.get_data())
 
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            serial = (
+                self.pipeline.get_active_profile()
+                .get_device()
+                .get_info(rs.camera_info.serial_number)
+            )
             save_path = PROJ_ROOT / "captures" / folder_name
             save_path.mkdir(parents=True, exist_ok=True)
 
-            color_filename = save_path / f"color_{timestamp}.jpg"
-            depth_filename = save_path / f"depth_{timestamp}.png"
+            color_filename = save_path / f"color_{serial}_{timestamp}.jpg"
+            depth_filename = save_path / f"depth_{serial}_{timestamp}.png"
 
             cv2.imwrite(str(color_filename), color_image)
             cv2.imwrite(str(depth_filename), depth_image)
@@ -166,40 +177,90 @@ class RealSenseCaptureToolkit:
 
         return jsonify({"timestamp": timestamp}), 200
 
+    def get_calibration_info(self):
+        """Retrieve and save the calibration info of the color and depth cameras."""
+        with self.stream_lock:
+            if not self.streaming or self.pipeline is None:
+                self.logger.warning(
+                    "Calibration info requested while streaming is inactive."
+                )
+                return "Streaming is not active", 400
+
+            try:
+                profile = self.pipeline.get_active_profile()
+                device = profile.get_device()
+                serial = device.get_info(rs.camera_info.serial_number)
+
+                # Get intrinsics for color and depth streams
+                color_stream = profile.get_stream(rs.stream.color)
+                depth_stream = profile.get_stream(rs.stream.depth)
+
+                color_intrinsics = (
+                    color_stream.as_video_stream_profile().get_intrinsics()
+                )
+                depth_intrinsics = (
+                    depth_stream.as_video_stream_profile().get_intrinsics()
+                )
+
+                # Get the extrinsics from depth to color
+                depth_to_color_extrinsics = depth_stream.get_extrinsics_to(color_stream)
+
+                calibration_info = {
+                    "color": {
+                        "fx": color_intrinsics.fx,
+                        "fy": color_intrinsics.fy,
+                        "cx": color_intrinsics.ppx,
+                        "cy": color_intrinsics.ppy,
+                    },
+                    "depth": {
+                        "fx": depth_intrinsics.fx,
+                        "fy": depth_intrinsics.fy,
+                        "cx": depth_intrinsics.ppx,
+                        "cy": depth_intrinsics.ppy,
+                    },
+                    "extrinsics": {
+                        "rotation": depth_to_color_extrinsics.rotation,
+                        "translation": depth_to_color_extrinsics.translation,
+                    },
+                    "width": color_intrinsics.width,
+                    "height": color_intrinsics.height,
+                }
+
+                filename = (
+                    f"{serial}_{color_intrinsics.width}x{color_intrinsics.height}.json"
+                )
+                save_path = PROJ_ROOT / "captures" / filename
+
+                write_data_to_json(save_path, calibration_info)
+                self.logger.info(f"Calibration info saved as {save_path}")
+
+                return jsonify({"filename": filename}), 200
+
+            except Exception as e:
+                self.logger.error(f"Error retrieving calibration info: {e}")
+                return str(e), 500
+
     def get_frames(self):
-        """Generator function to retrieve and yield frames for streaming."""
+        """Generator function to retrieve and yield color frames for streaming."""
         while True:
             with self.stream_lock:
                 if self.streaming and self.pipeline is not None:
                     try:
                         frames = self.pipeline.wait_for_frames()
-                        aligned_frames = self.align.process(frames)
+                        color_frame = frames.get_color_frame()
 
-                        aligned_depth_frame = aligned_frames.get_depth_frame()
-                        color_frame = aligned_frames.get_color_frame()
-
-                        if not aligned_depth_frame or not color_frame:
+                        if not color_frame:
                             continue
 
                         color_image = np.asanyarray(color_frame.get_data())
-                        depth_image = np.asanyarray(aligned_depth_frame.get_data())
 
-                        # Normalize depth image for visualization
-                        depth_colormap = cv2.applyColorMap(
-                            cv2.convertScaleAbs(depth_image, alpha=0.03),
-                            cv2.COLORMAP_JET,
-                        )
-
-                        # Combine the color and depth images side by side
-                        combined_image = np.hstack((color_image, depth_colormap))
-
-                        # Encode the combined image
-                        combined_jpeg = cv2.imencode(".jpg", combined_image)[1]
+                        # Encode the color image
+                        color_jpeg = cv2.imencode(".jpg", color_image)[1]
 
                         yield (
                             b"--frame\r\n"
                             b"Content-Type: image/jpeg\r\n\r\n"
-                            + combined_jpeg.tobytes()
+                            + color_jpeg.tobytes()
                             + b"\r\n\r\n"
                         )
 
