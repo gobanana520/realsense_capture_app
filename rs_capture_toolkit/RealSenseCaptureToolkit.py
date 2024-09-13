@@ -6,10 +6,14 @@ import datetime
 import time
 import threading
 import sys
-from .Utils import *
+from .Utils import get_logger, read_config, PROJ_ROOT
 
 
 class RealSenseCaptureToolkit:
+    """
+    A toolkit to capture and stream video from Intel RealSense cameras, with a web interface.
+    """
+
     def __init__(self):
         self.app = Flask("RealSense Capture Toolkit")
         self.pipeline = None
@@ -19,6 +23,10 @@ class RealSenseCaptureToolkit:
 
         # Load RealSense settings from JSON file
         self.rs_config = read_config()
+
+        # Initialize the logger
+        self.logger = get_logger("RealSenseCaptureToolkit")
+        self.logger.info("RealSense Capture Toolkit initialized.")
 
         # Create a black image for fallback use when frames are not available
         self.black_image = np.zeros(
@@ -53,6 +61,7 @@ class RealSenseCaptureToolkit:
             }
             for device in context.devices
         ]
+        self.logger.info(f"Found {len(devices)} RealSense devices.")
         return devices
 
     def list_devices(self):
@@ -64,10 +73,14 @@ class RealSenseCaptureToolkit:
         """Start the RealSense stream based on the device serial number provided."""
         with self.stream_lock:
             if self.streaming:
+                self.logger.warning("Stream already running.")
                 return "", 204  # Already streaming
 
             device_serial = request.json.get("serial")
             if not device_serial:
+                self.logger.error(
+                    "Device serial number is required to start streaming."
+                )
                 return "Device serial number is required", 400
 
             self.pipeline = rs.pipeline()
@@ -89,8 +102,10 @@ class RealSenseCaptureToolkit:
             )
             try:
                 self.pipeline.start(config)
+                self.logger.info(f"Started streaming from device: {device_serial}")
             except Exception as e:
                 self.pipeline = None
+                self.logger.error(f"Failed to start stream: {e}")
                 return f"Failed to start stream: {e}", 500
 
             align_to = rs.stream.color
@@ -105,8 +120,9 @@ class RealSenseCaptureToolkit:
             if self.pipeline is not None:
                 try:
                     self.pipeline.stop()
+                    self.logger.info("Stopped streaming.")
                 except Exception as e:
-                    print(f"Error stopping pipeline: {e}")
+                    self.logger.error(f"Error stopping pipeline: {e}")
                 finally:
                     self.pipeline = None
 
@@ -116,6 +132,7 @@ class RealSenseCaptureToolkit:
     def capture(self):
         """Capture and save color and depth images."""
         if not self.streaming or self.pipeline is None:
+            self.logger.warning("Attempted capture while streaming is inactive.")
             return "Streaming is not active", 400
 
         data = request.json
@@ -129,6 +146,7 @@ class RealSenseCaptureToolkit:
             color_frame = aligned_frames.get_color_frame()
 
             if not aligned_depth_frame or not color_frame:
+                self.logger.error("Failed to capture frames.")
                 return "Failed to capture frames", 500
 
             color_image = np.asanyarray(color_frame.get_data())
@@ -143,6 +161,8 @@ class RealSenseCaptureToolkit:
 
             cv2.imwrite(str(color_filename), color_image)
             cv2.imwrite(str(depth_filename), depth_image)
+
+            self.logger.info(f"Captured images saved at {save_path}")
 
         return jsonify({"timestamp": timestamp}), 200
 
@@ -184,11 +204,13 @@ class RealSenseCaptureToolkit:
                         )
 
                     except RuntimeError as e:
-                        print(f"Runtime error during frame retrieval: {e}")
+                        self.logger.error(f"Runtime error during frame retrieval: {e}")
                         yield from self.yield_fallback_image()
 
                     except Exception as e:
-                        print(f"Unexpected error during frame retrieval: {e}")
+                        self.logger.error(
+                            f"Unexpected error during frame retrieval: {e}"
+                        )
                         yield from self.yield_fallback_image()
                 else:
                     yield from self.yield_fallback_image()
@@ -216,7 +238,8 @@ class RealSenseCaptureToolkit:
     def run(self):
         """Run the Flask web server."""
         try:
+            self.logger.info("Starting Flask server...")
             self.app.run(host="0.0.0.0", port=5000)
         except Exception as e:
-            print(f"Error running the Flask app: {e}")
+            self.logger.error(f"Error running the Flask app: {e}")
             sys.exit(1)

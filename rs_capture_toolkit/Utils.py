@@ -3,10 +3,11 @@ from pathlib import Path
 import json
 from easydict import EasyDict
 
-
 PROJ_ROOT = Path(__file__).resolve().parents[1]
 
+
 def read_config():
+    """Read the configuration file and return it as an EasyDict object."""
     config_file = PROJ_ROOT / "config" / "config.json"
     config = read_data_from_json(config_file)
     return EasyDict(config)
@@ -46,11 +47,13 @@ def get_logger(name, level="INFO"):
 
 
 def read_data_from_json(file_path):
+    """Read data from a JSON file and return it as a dictionary."""
     with Path(file_path).open("r") as f:
         data = json.load(f)
     return data
 
 
 def write_data_to_json(file_path, data):
+    """Write data to a JSON file."""
     with Path(file_path).open("w") as f:
         json.dump(data, f, indent=2, sort_keys=False, ensure_ascii=True)
