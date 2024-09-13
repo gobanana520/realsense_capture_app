@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["rs_capture_toolkit"]
+
+[project]
+name = "realsense-capture-toolkit"
+version = "0.0.1"
+description = "A toolkit for capturing images from Intel RealSense D400 cameras."
+authors = [
+    { name = "Jikai Wang", email = "jikai.wang@utdallas.edu" }
+]
+license = { text = "MIT" }
+
+dependencies = [
+    "flask==3.0.3",
+    "numpy==1.26.4",
+    "opencv-python==4.10.0.84",
+    "opencv-contrib-python==4.10.0.84",
+    "pyrealsense2==2.55.1.6486",
+    "easydict==1.13",
+]

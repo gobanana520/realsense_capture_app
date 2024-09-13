@@ -3,11 +3,11 @@
 ## Table of Contents
 - [RealSense Camera Capture Toolkit](#realsense-camera-capture-toolkit)
   - [Table of Contents](#table-of-contents)
+  - [Python Environment Setup](#python-environment-setup)
   - [Installation](#installation)
-  - [Clone Repository](#clone-repository)
   - [Usage](#usage)
 
-## Installation
+## Python Environment Setup
 
 1. **Create Conda Environment**
    ```bash
@@ -19,19 +19,22 @@
    conda activate rs-capture-toolkit
    ```
 
-3. **Install Dependencies**
+## Installation
+
+1. **Clone Repository**
+
+   Clone the repository and navigate to the project directory:
+
    ```bash
-   python -m pip install --no-cache-dir -r requirements.txt
+   git clone git@github.com:gobanana520/realsense-capture-toolkit.git
+   cd realsense-capture-toolkit
    ```
 
-## Clone Repository
+2. **Install realsense-capture-toolkit**
+   ```bash
+   python -m pip install --no-cache-dir -e .
+   ```
 
-Clone the repository and navigate to the project directory:
-
-```bash
-git clone --recursive git@github.com:gobanana520/realsense-capture-toolkit.git
-cd realsense-capture-toolkit
-```
 
 ## Usage
 
@@ -58,22 +61,22 @@ cd realsense-capture-toolkit
 
    Open your browser and go to `http://localhost:5000`. You should see the following page:
 
-   ![Initial GUI](docs/images/capture-gui-launch.png)
+   ![Initial GUI](docs/assets/capture-gui-launch.png)
 
 3. **Start Streaming**
 
    Select the camera and click on the `Start Streaming` button. The color and depth streaming frames will be displayed in the middle of the page:
 
-   ![Streaming GUI](docs/images/capture-gui-start-streaming.png)
+   ![Streaming GUI](docs/assets/capture-gui-start-streaming.png)
 
 4. **Capture Frames**
 
    Click the `Capture` button to capture the current frame. The captured images will be saved in the `capture/<sub-folder-name>` folder, and the capture status will be displayed at the bottom of the page:
 
-   ![Capture GUI](docs/images/capture-gui-capture.png)
+   ![Capture GUI](docs/assets/capture-gui-capture.png)
 
 5. **Stop Streaming**
 
    Click the `Stop Streaming` button to stop the camera stream:
 
-   ![Stop Streaming GUI](docs/images/capture-gui-stop-streaming.png)
+   ![Stop Streaming GUI](docs/assets/capture-gui-stop-streaming.png)

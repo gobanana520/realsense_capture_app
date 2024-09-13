@@ -1,0 +1,33 @@
+# Python specific
+*.pyc
+*.pyo
+__pycache__/
+
+# Jupyter Notebook specific
+.ipynb_checkpoints
+
+# macOS specific
+.DS_Store
+
+# PyCharm specific
+.idea/
+
+# Visual Studio Code specific
+.vscode/
+
+# Windows specific
+Thumbs.db
+
+# Linux specific
+*~
+
+# Python packaging
+*.egg-info/
+
+# Python distribution
+dist/
+
+# Python environment
+.venv/
+env/
+
