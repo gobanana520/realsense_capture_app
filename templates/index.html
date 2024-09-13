@@ -33,7 +33,7 @@
           <div class="card">
             <div class="card-header">Connected Devices</div>
             <div class="card-body">
-              <select id="device-select" class="form-select"></select>
+              <select id="device-select" class="form-select" multiple></select>
             </div>
           </div>
 
@@ -70,9 +70,12 @@
           <div class="card flex-grow-1">
             <div class="card-header">Streaming Image</div>
             <div class="card-body text-center">
+              <select id="view-select" class="form-select mb-3">
+                <!-- Options will be dynamically populated with device serials -->
+              </select>
               <img
                 id="stream-frame"
-                src="{{ url_for('video_feed') }}"
+                src=""
                 alt="Stream Frame"
                 class="img-fluid"
               />

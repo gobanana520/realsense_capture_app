@@ -11,15 +11,14 @@ from .Utils import get_logger, read_config, PROJ_ROOT, write_data_to_json
 
 class RealSenseCaptureToolkit:
     """
-    A toolkit to capture and stream video from Intel RealSense cameras, with a web interface.
+    A toolkit to capture and stream video from multiple Intel RealSense cameras, with a web interface.
     """
 
     def __init__(self):
         self.app = Flask("RealSense Capture Toolkit")
-        self.pipeline = None
-        self.align = None
-        self.streaming = False
-        self.stream_lock = threading.Lock()
+        self.pipelines = {}  # Dictionary to hold pipelines for each device
+        self.aligns = {}  # Dictionary to hold align objects for each device
+        self.stream_locks = {}  # Dictionary to hold locks for each device
 
         # Load RealSense settings from JSON file
         self.rs_config = read_config()
@@ -77,176 +76,183 @@ class RealSenseCaptureToolkit:
 
     def start_stream(self):
         """Start the RealSense stream based on the device serial number provided."""
-        with self.stream_lock:
-            if self.streaming:
-                self.logger.warning("Stream already running.")
-                return "", 204  # Already streaming
+        device_serial = request.json.get("serial")
+        if not device_serial:
+            self.logger.error("Device serial number is required to start streaming.")
+            return "Device serial number is required", 400
 
-            device_serial = request.json.get("serial")
-            if not device_serial:
-                self.logger.error(
-                    "Device serial number is required to start streaming."
-                )
-                return "Device serial number is required", 400
+        if device_serial in self.pipelines:
+            self.logger.warning(f"Stream already running for device {device_serial}.")
+            return "", 204  # Already streaming
 
-            self.pipeline = rs.pipeline()
-            config = rs.config()
-            config.enable_device(device_serial)
-            config.enable_stream(
-                rs.stream.color,
-                self.rs_config.image_width,
-                self.rs_config.image_height,
-                rs.format.bgr8,
-                self.rs_config.fps,
-            )
-            config.enable_stream(
-                rs.stream.depth,
-                self.rs_config.image_width,
-                self.rs_config.image_height,
-                rs.format.z16,
-                self.rs_config.fps,
-            )
-            try:
-                self.pipeline.start(config)
-                self.logger.info(f"Started streaming from device: {device_serial}")
-            except Exception as e:
-                self.pipeline = None
-                self.logger.error(f"Failed to start stream: {e}")
-                return f"Failed to start stream: {e}", 500
+        pipeline = rs.pipeline()
+        config = rs.config()
+        config.enable_device(device_serial)
+        config.enable_stream(
+            rs.stream.color,
+            self.rs_config.image_width,
+            self.rs_config.image_height,
+            rs.format.bgr8,
+            self.rs_config.fps,
+        )
+        config.enable_stream(
+            rs.stream.depth,
+            self.rs_config.image_width,
+            self.rs_config.image_height,
+            rs.format.z16,
+            self.rs_config.fps,
+        )
+        try:
+            pipeline.start(config)
+            self.logger.info(f"Started streaming from device: {device_serial}")
+        except Exception as e:
+            self.logger.error(f"Failed to start stream: {e}")
+            return f"Failed to start stream: {e}", 500
 
-            align_to = rs.stream.color
-            self.align = rs.align(align_to)
-            self.streaming = True
+        self.pipelines[device_serial] = pipeline
+        self.aligns[device_serial] = rs.align(rs.stream.color)
+        self.stream_locks[device_serial] = threading.Lock()
 
         return "", 204
 
     def stop_stream(self):
         """Stop the RealSense stream."""
-        with self.stream_lock:
-            if self.pipeline is not None:
+        device_serial = request.json.get("serial")
+        if device_serial in self.pipelines:
+            with self.stream_locks[device_serial]:
                 try:
-                    self.pipeline.stop()
-                    self.logger.info("Stopped streaming.")
+                    self.pipelines[device_serial].stop()
+                    self.logger.info(f"Stopped streaming from device: {device_serial}")
                 except Exception as e:
                     self.logger.error(f"Error stopping pipeline: {e}")
                 finally:
-                    self.pipeline = None
+                    del self.pipelines[device_serial]
+                    del self.aligns[device_serial]
+                    del self.stream_locks[device_serial]
 
-            self.streaming = False
-        return "", 204
+            return "", 204
+        else:
+            self.logger.error(f"No active stream found for device {device_serial}")
+            return "Stream not found", 404
 
     def capture(self):
-        """Capture and save both color and depth images."""
-        if not self.streaming or self.pipeline is None:
-            self.logger.warning("Attempted capture while streaming is inactive.")
+        """Capture and save both color and depth images for all active devices."""
+        device_serial = request.json.get("serial")
+        folder_name = request.json.get("folder_name", "default")
+
+        if device_serial not in self.pipelines:
+            self.logger.warning(
+                f"Attempted capture while streaming is inactive for device {device_serial}."
+            )
             return "Streaming is not active", 400
 
-        data = request.json
-        folder_name = data.get("folder_name", "default")
+        save_path = PROJ_ROOT / "captures" / folder_name
+        save_path.mkdir(parents=True, exist_ok=True)
 
-        with self.stream_lock:
-            frames = self.pipeline.wait_for_frames()
-            aligned_frames = self.align.process(frames)
+        with self.stream_locks[device_serial]:
+            frames = self.pipelines[device_serial].wait_for_frames()
+            aligned_frames = self.aligns[device_serial].process(frames)
 
             aligned_depth_frame = aligned_frames.get_depth_frame()
             color_frame = aligned_frames.get_color_frame()
 
             if not aligned_depth_frame or not color_frame:
-                self.logger.error("Failed to capture frames.")
+                self.logger.error(
+                    f"Failed to capture frames for device {device_serial}."
+                )
                 return "Failed to capture frames", 500
 
             color_image = np.asanyarray(color_frame.get_data())
             depth_image = np.asanyarray(aligned_depth_frame.get_data())
 
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            serial = (
-                self.pipeline.get_active_profile()
-                .get_device()
-                .get_info(rs.camera_info.serial_number)
-            )
-            save_path = PROJ_ROOT / "captures" / folder_name
-            save_path.mkdir(parents=True, exist_ok=True)
-
-            color_filename = save_path / f"color_{serial}_{timestamp}.jpg"
-            depth_filename = save_path / f"depth_{serial}_{timestamp}.png"
+            color_filename = save_path / f"color_{device_serial}_{timestamp}.jpg"
+            depth_filename = save_path / f"depth_{device_serial}_{timestamp}.png"
 
             cv2.imwrite(str(color_filename), color_image)
             cv2.imwrite(str(depth_filename), depth_image)
 
-            self.logger.info(f"Captured images saved at {save_path}")
+            self.logger.info(
+                f"Captured images saved at {save_path} for device {device_serial}"
+            )
 
         return jsonify({"timestamp": timestamp}), 200
 
     def get_calibration_info(self):
-        """Retrieve and save the calibration info of the color and depth cameras."""
-        with self.stream_lock:
-            if not self.streaming or self.pipeline is None:
-                self.logger.warning(
-                    "Calibration info requested while streaming is inactive."
-                )
-                return "Streaming is not active", 400
+        """Retrieve and save the calibration info of the color and depth cameras for a specific device."""
+        device_serial = request.json.get("serial")
 
-            try:
-                profile = self.pipeline.get_active_profile()
-                device = profile.get_device()
-                serial = device.get_info(rs.camera_info.serial_number)
+        if device_serial not in self.pipelines:
+            self.logger.warning(
+                f"Calibration info requested while streaming is inactive for device {device_serial}."
+            )
+            return "Streaming is not active", 400
 
-                # Get intrinsics for color and depth streams
-                color_stream = profile.get_stream(rs.stream.color)
-                depth_stream = profile.get_stream(rs.stream.depth)
+        try:
+            profile = self.pipelines[device_serial].get_active_profile()
+            device = profile.get_device()
+            serial = device.get_info(rs.camera_info.serial_number)
 
-                color_intrinsics = (
-                    color_stream.as_video_stream_profile().get_intrinsics()
-                )
-                depth_intrinsics = (
-                    depth_stream.as_video_stream_profile().get_intrinsics()
-                )
+            # Get intrinsics for color and depth streams
+            color_stream = profile.get_stream(rs.stream.color)
+            depth_stream = profile.get_stream(rs.stream.depth)
 
-                # Get the extrinsics from depth to color
-                depth_to_color_extrinsics = depth_stream.get_extrinsics_to(color_stream)
+            color_intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
+            depth_intrinsics = depth_stream.as_video_stream_profile().get_intrinsics()
 
-                calibration_info = {
-                    "color": {
-                        "fx": color_intrinsics.fx,
-                        "fy": color_intrinsics.fy,
-                        "cx": color_intrinsics.ppx,
-                        "cy": color_intrinsics.ppy,
-                    },
-                    "depth": {
-                        "fx": depth_intrinsics.fx,
-                        "fy": depth_intrinsics.fy,
-                        "cx": depth_intrinsics.ppx,
-                        "cy": depth_intrinsics.ppy,
-                    },
-                    "extrinsics": {
-                        "rotation": depth_to_color_extrinsics.rotation,
-                        "translation": depth_to_color_extrinsics.translation,
-                    },
-                    "width": color_intrinsics.width,
-                    "height": color_intrinsics.height,
-                }
+            # Get the extrinsics from depth to color
+            depth_to_color_extrinsics = depth_stream.get_extrinsics_to(color_stream)
 
-                filename = (
-                    f"{serial}_{color_intrinsics.width}x{color_intrinsics.height}.json"
-                )
-                save_path = PROJ_ROOT / "captures" / filename
+            calibration_info = {
+                "color": {
+                    "fx": color_intrinsics.fx,
+                    "fy": color_intrinsics.fy,
+                    "cx": color_intrinsics.ppx,
+                    "cy": color_intrinsics.ppy,
+                },
+                "depth": {
+                    "fx": depth_intrinsics.fx,
+                    "fy": depth_intrinsics.fy,
+                    "cx": depth_intrinsics.ppx,
+                    "cy": depth_intrinsics.ppy,
+                },
+                "extrinsics": {
+                    "rotation": depth_to_color_extrinsics.rotation,
+                    "translation": depth_to_color_extrinsics.translation,
+                },
+                "width": color_intrinsics.width,
+                "height": color_intrinsics.height,
+            }
 
-                write_data_to_json(save_path, calibration_info)
-                self.logger.info(f"Calibration info saved as {save_path}")
+            save_path = PROJ_ROOT / "calibrations"
+            save_path.mkdir(parents=True, exist_ok=True)
+            filename = (
+                save_path
+                / f"{serial}_{color_intrinsics.width}x{color_intrinsics.height}.json"
+            )
+            write_data_to_json(filename, calibration_info)
+            self.logger.info(f"Calibration info saved as {filename}")
 
-                return jsonify({"filename": filename}), 200
+            return jsonify({"filename": str(filename)}), 200
 
-            except Exception as e:
-                self.logger.error(f"Error retrieving calibration info: {e}")
-                return str(e), 500
+        except Exception as e:
+            self.logger.error(f"Error retrieving calibration info: {e}")
+            return str(e), 500
 
-    def get_frames(self):
+    def get_frames(self, serial):
         """Generator function to retrieve and yield color frames for streaming."""
         while True:
-            with self.stream_lock:
-                if self.streaming and self.pipeline is not None:
+            if serial not in self.stream_locks:
+                self.logger.info(
+                    f"No active stream found for device {serial}. Returning fallback image."
+                )
+                yield from self.yield_fallback_image()
+                break
+
+            with self.stream_locks[serial]:
+                if serial in self.pipelines:
                     try:
-                        frames = self.pipeline.wait_for_frames()
+                        frames = self.pipelines[serial].wait_for_frames()
                         color_frame = frames.get_color_frame()
 
                         if not color_frame:
@@ -265,12 +271,14 @@ class RealSenseCaptureToolkit:
                         )
 
                     except RuntimeError as e:
-                        self.logger.error(f"Runtime error during frame retrieval: {e}")
+                        self.logger.error(
+                            f"Runtime error during frame retrieval for device {serial}: {e}"
+                        )
                         yield from self.yield_fallback_image()
 
                     except Exception as e:
                         self.logger.error(
-                            f"Unexpected error during frame retrieval: {e}"
+                            f"Unexpected error during frame retrieval for device {serial}: {e}"
                         )
                         yield from self.yield_fallback_image()
                 else:
@@ -288,8 +296,10 @@ class RealSenseCaptureToolkit:
 
     def video_feed(self):
         """Provide the video feed to the front-end."""
+        serial = request.args.get("serial")
         return Response(
-            self.get_frames(), mimetype="multipart/x-mixed-replace; boundary=frame"
+            self.get_frames(serial),
+            mimetype="multipart/x-mixed-replace; boundary=frame",
         )
 
     def index(self):
@@ -304,3 +314,8 @@ class RealSenseCaptureToolkit:
         except Exception as e:
             self.logger.error(f"Error running the Flask app: {e}")
             sys.exit(1)
+
+
+if __name__ == "__main__":
+    toolkit = RealSenseCaptureToolkit()
+    toolkit.run()
