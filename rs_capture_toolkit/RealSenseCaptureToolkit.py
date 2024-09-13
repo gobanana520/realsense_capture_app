@@ -146,7 +146,7 @@ class RealSenseCaptureToolkit:
             )
             return "Streaming is not active", 400
 
-        save_path = PROJ_ROOT / "captures" / folder_name
+        save_path = PROJ_ROOT / "data" / "captures" / folder_name
         save_path.mkdir(parents=True, exist_ok=True)
 
         with self.stream_locks[device_serial]:
@@ -224,7 +224,7 @@ class RealSenseCaptureToolkit:
                 "height": color_intrinsics.height,
             }
 
-            save_path = PROJ_ROOT / "calibrations"
+            save_path = PROJ_ROOT / "data" / "calibrations"
             save_path.mkdir(parents=True, exist_ok=True)
             filename = (
                 save_path
